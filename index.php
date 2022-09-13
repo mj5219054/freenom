@@ -1,147 +1,37 @@
-<?php
-/**
- * 入口文件
- *
- * 云函数版本维护：
- * 1、去掉顶部的 “#!/usr/bin/env php”，将文件名改为 index.php
- * 2、将 “define('IS_SCF', false);” 改为 “define('IS_SCF', true);”
- * 3、干掉最下方的 run(); 调用
- *
- * @author mybsdc <mybsdc@gmail.com>
- * @date 2019/3/2
- * @time 11:05
- * @link https://github.com/luolongfei/freenom
- */
+name: Freenom Auto Renew
 
-error_reporting(E_ERROR);
-ini_set('display_errors', 1);
-set_time_limit(0);
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: 00 02 * * *
+jobs:
+  run-it:
+    runs-on: ubuntu-latest
+    name: Run it on action
+    steps:
+      - name: Checkout master
+        uses: actions/checkout@v2
+      - name: Setting up PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '7.4'
+      - name: Setting up Freenom account
+        run: |
+          cp .env.example .env
+          if [[ ('${{ secrets.FREENOM_USERNAME }}' == '' || '${{ secrets.FREENOM_PASSWORD }}' == '') && '${{ secrets.MULTIPLE_ACCOUNTS }}' == '' ]]; then echo '你在 Github 的当前项目的 Settings > Secrets 画面没有设置任何与账户信息相关的 secret 值，无法正常运行，请添加新的 secret 值，设置 FREENOM_USERNAME 与 FREENOM_PASSWORD，或者设置 MULTIPLE_ACCOUNTS，以及 .env 文件中其它必要项，各项的具体含义与格式参考本项目 .env 文件中的说明。'; fi
+          if [ '${{ secrets.FREENOM_USERNAME }}' != '' ]; then sed -i "s/^FREENOM_USERNAME=.*$/FREENOM_USERNAME='${{ secrets.FREENOM_USERNAME }}'/" .env; fi
+          if [ '${{ secrets.FREENOM_PASSWORD }}' != '' ]; then sed -i "s/^FREENOM_PASSWORD=.*$/FREENOM_PASSWORD='${{ secrets.FREENOM_PASSWORD }}'/" .env; fi
+          if [ '${{ secrets.MULTIPLE_ACCOUNTS }}' != '' ]; then sed -i "s/^MULTIPLE_ACCOUNTS=.*$/MULTIPLE_ACCOUNTS='${{ secrets.MULTIPLE_ACCOUNTS }}'/" .env; fi
+          if [ '${{ secrets.MAIL_USERNAME }}' != '' ]; then sed -i "s/^MAIL_USERNAME=.*$/MAIL_USERNAME='${{ secrets.MAIL_USERNAME }}'/" .env; fi
+          if [ '${{ secrets.MAIL_PASSWORD }}' != '' ]; then sed -i "s/^MAIL_PASSWORD=.*$/MAIL_PASSWORD='${{ secrets.MAIL_PASSWORD }}'/" .env; fi
+          if [ '${{ secrets.TO }}' != '' ]; then sed -i "s/^TO=.*$/TO='${{ secrets.TO }}'/" .env; fi
+          if [ '${{ secrets.MAIL_ENABLE }}' != '' ]; then sed -i "s/^MAIL_ENABLE=.*$/MAIL_ENABLE='${{ secrets.MAIL_ENABLE }}'/" .env; fi
+          if [ '${{ secrets.TELEGRAM_CHAT_ID }}' != '' ]; then sed -i "s/^TELEGRAM_CHAT_ID=.*$/TELEGRAM_CHAT_ID='${{ secrets.TELEGRAM_CHAT_ID }}'/" .env; fi
+          if [ '${{ secrets.TELEGRAM_BOT_TOKEN }}' != '' ]; then sed -i "s/^TELEGRAM_BOT_TOKEN=.*$/TELEGRAM_BOT_TOKEN='${{ secrets.TELEGRAM_BOT_TOKEN }}'/" .env; fi
+          if [ '${{ secrets.TELEGRAM_BOT_ENABLE }}' != '' ]; then sed -i "s/^TELEGRAM_BOT_ENABLE=.*$/TELEGRAM_BOT_ENABLE='${{ secrets.TELEGRAM_BOT_ENABLE }}'/" .env; fi
+          if [ '${{ secrets.NOTICE_FREQ }}' != '' ]; then sed -i "s/^NOTICE_FREQ=.*$/NOTICE_FREQ='${{ secrets.NOTICE_FREQ }}'/" .env; fi
+          sed -i "s/^ON_GITHUB_ACTIONS=.*$/ON_GITHUB_ACTIONS=true/" .env
+      - name: Renewing Freenom domains
+        run: |
+          php run
 
-define('IS_SCF', true); // 是否云函数环境
-define('IS_CLI', PHP_SAPI === 'cli');
-define('DS', DIRECTORY_SEPARATOR);
-define('ROOT_PATH', realpath(__DIR__));
-define('VENDOR_PATH', realpath(ROOT_PATH . '/vendor'));
-define('APP_PATH', realpath(ROOT_PATH . '/app'));
-define('DATA_PATH', IS_SCF ? '/tmp' : realpath(ROOT_PATH . '/app/Data')); // 云函数只有 /tmp 目录的读写权限
-define('RESOURCES_PATH', realpath(ROOT_PATH . '/resources'));
-
-date_default_timezone_set('Asia/Shanghai');
-
-/**
- * 注册错误处理
- */
-register_shutdown_function('customize_error_handler');
-
-/**
- * 注册异常处理
- */
-set_exception_handler('exception_handler');
-
-require VENDOR_PATH . '/autoload.php';
-
-use Luolongfei\Libs\Log;
-use Luolongfei\Libs\Message;
-
-/**
- * @throws Exception
- */
-function customize_error_handler()
-{
-    if (!is_null($error = error_get_last())) {
-        system_log(json_encode($error, JSON_UNESCAPED_UNICODE));
-        Log::error(lang('100057'), $error);
-        Message::send(lang('100058') . json_encode($error, JSON_UNESCAPED_UNICODE), lang('100059'));
-    }
-}
-
-/**
- * @param \Exception $e
- *
- * @throws \Exception
- */
-function exception_handler($e)
-{
-    Log::error(lang('100060') . $e->getMessage());
-    Message::send(lang('100061') . $e->getMessage(), lang('100062'));
-}
-
-/**
- * 腾讯云函数
- *
- * @param $event
- * @param $context
- *
- * @return string
- */
-function main_handler($event, $context)
-{
-    return run();
-}
-
-/**
- * 阿里云函数
- *
- * @param $event
- * @param $context
- *
- * @return string
- */
-function handler($event, $context)
-{
-    $logger = $GLOBALS['fcLogger'];
-    $logger->info(lang('100063'));
-
-    return run();
-}
-
-/**
- * 华为云函数
- *
- * @param $event
- * @param $context
- *
- * @return bool|string
- */
-function huawei_handler($event, $context)
-{
-    $logger = $context->getLogger();
-
-    $logger->info('开始执行华为云函数');
-
-    // 手动设置环境变量
-    $logger->info('设置环境变量');
-    $allEnvKeys = array_keys((array)env());
-    foreach ($allEnvKeys as $key) {
-        $value = $context->getUserData((string)$key);
-        if (strlen($value) > 0) {
-            $logger->info('从控制台发现环境变量：' . $key);
-            putenv("{$key}={$value}");
-        }
-    }
-    $logger->info('环境变量设置完成');
-
-    return run();
-}
-
-/**
- * @return string|bool
- */
-function run()
-{
-    try {
-        system_check();
-
-        $class = sprintf('Luolongfei\App\Console\%s', get_argv('c', 'FreeNom'));
-        $fn = get_argv('m', 'handle');
-
-        $class::getInstance()->$fn();
-
-        return IS_SCF ? lang('100007') : true;
-    } catch (\Exception $e) {
-        system_log(sprintf(lang('100006'), $e->getMessage()), $e->getTrace());
-        Message::send(lang('100004') . $e->getMessage(), lang('100005'));
-    }
-
-    return IS_SCF ? lang('100008') : false;
-}
